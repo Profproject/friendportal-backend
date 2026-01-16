@@ -102,8 +102,6 @@ def ad(data: dict):
 @app.post("/webhook/cryptopay")
 async def webhook(request: Request):
     data = await request.json()
-    if request.headers.get("Crypto-Pay-Webhook-Secret") != WEBHOOK_SECRET:
-        return {"ok": False}
 
     payload = data.get("payload",{}).get("payload","")
     if payload.startswith("activate:"):
@@ -117,3 +115,4 @@ async def webhook(request: Request):
         _, amount, uid, link = payload.split(":",3)
         send_admin(f"📣 Ad paid\nUser: {uid}\nAmount: {amount} TON\n{link}")
     return {"ok": True}
+
