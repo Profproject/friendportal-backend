@@ -85,10 +85,27 @@ def force_activate(data: dict):
 @app.post("/balance")
 def balance(data: dict):
     d = db()
-    user = d.query(User).get(data["user_id"])
+    uid = data["user_id"]
+    ref_id = data.get("ref_id")
+
+    user = d.query(User).get(uid)
+
     if not user:
-        return {"balance": 0, "activated": False}
-    return {"balance": user.balance, "activated": user.activated}
+        user = User(id=uid)
+        d.add(user)
+        d.commit()
+        d.refresh(user)
+
+        # 👇 начисление 0.05 TON за первый переход
+        if ref_id:
+            user.balance_locked += 0.05
+            user.visit_reward_given = True
+            d.commit()
+
+    return {
+        "balance": user.balance,
+        "activated": user.activated
+    }
 
 @app.post("/stats")
 def stats(data: dict):
@@ -108,11 +125,15 @@ async def webhook(request: Request):
         uid = int(payload.split(":")[1])
         d = db()
         user = d.query(User).get(uid)
-        if user:
+        if user and not user.activated:
+            user.balance += user.balance_locked
+            user.balance_locked = 0
             user.activated = True
             d.commit()
+
     if payload.startswith("ad:"):
         _, amount, uid, link = payload.split(":",3)
         send_admin(f"📣 Ad paid\nUser: {uid}\nAmount: {amount} TON\n{link}")
     return {"ok": True}
+
 
