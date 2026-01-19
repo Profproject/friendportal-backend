@@ -15,7 +15,7 @@ class User(Base):
 
     # балансы
     balance = Column(Float, default=0)
-    balance_locked = Column(Float, default=0)
+    
 
     # флаги
     visit_reward_given = Column(Boolean, default=False)
@@ -50,3 +50,4 @@ class AdRequest(Base):
 
     status = Column(String, default="pending")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
