@@ -53,7 +53,6 @@ def balance(data: dict):
             id=uid,
             referrer_id=ref_id,
             balance=0,
-            balance_locked=0,
             visit_reward_given=False,
             activated=False
         )
@@ -68,18 +67,20 @@ def balance(data: dict):
         and user.referrer_id == ref_id
         and ref_id != uid
     ):
-        user.balance_locked += 0.05
-        user.visit_reward_given = True
-        d.commit()
+        ref_user = d.query(User).get(ref_id)
+if ref_user and ref_id != uid and not user.visit_reward_given:
+    ref_user.balance += 0.05
+    user.visit_reward_given = True
+    d.commit()
+
 
     total = round(user.balance + user.balance_locked, 4)
 
     return {
-        "balance": total,              # ОБЩИЙ баланс
-        "available": round(user.balance, 4),
-        "locked": round(user.balance_locked, 4),
-        "activated": user.activated
-    }
+    "balance": round(user.balance, 4),
+    "activated": user.activated
+}
+
 
 # =========================
 # PAY / ACTIVATE
@@ -176,8 +177,6 @@ async def webhook(request: Request):
         d = db()
         user = d.query(User).get(uid)
         if user and not user.activated:
-            user.balance += user.balance_locked
-            user.balance_locked = 0
             user.activated = True
             d.commit()
 
@@ -186,3 +185,4 @@ async def webhook(request: Request):
         send_admin(f"📣 Ad paid\nUser {uid}\n{amount} TON\n{link}")
 
     return {"ok": True}
+
