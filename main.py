@@ -38,7 +38,7 @@ def create_invoice(amount: int, payload: str):
     return r.json()["result"]["pay_url"]
 
 # =========================
-# BALANCE + REF VISIT
+# BALANCE + REF VISIT (FIXED)
 # =========================
 @app.post("/balance")
 def balance(data: dict):
@@ -61,16 +61,21 @@ def balance(data: dict):
         d.commit()
         d.refresh(user)
 
-        # 🔹 0.05 TON за первый переход
-        if ref_id:
-            user.balance_locked += 0.05
-            user.visit_reward_given = True
-            d.commit()
+    # 🔹 НАЧИСЛЕНИЕ 0.05 TON ЗА ПЕРВЫЙ ВИЗИТ
+    if (
+        ref_id
+        and not user.visit_reward_given
+        and user.referrer_id == ref_id
+        and ref_id != uid
+    ):
+        user.balance_locked += 0.05
+        user.visit_reward_given = True
+        d.commit()
 
     total = round(user.balance + user.balance_locked, 4)
 
     return {
-        "balance": total,
+        "balance": total,              # ОБЩИЙ баланс
         "available": round(user.balance, 4),
         "locked": round(user.balance_locked, 4),
         "activated": user.activated
@@ -112,36 +117,41 @@ def withdraw(data: dict):
     return {"ok": True}
 
 # =========================
-# STATS (РЕАЛЬНЫЕ)
+# STATS (FIXED)
 # =========================
 @app.post("/stats")
 def stats(data: dict):
     d = db()
     uid = data["user_id"]
 
-    # прямые рефералы
-    level1_users = d.query(User).filter(User.referrer_id == uid).all()
-    level1_activated = [u for u in level1_users if u.activated]
-
-    # второй уровень
-    level2_activated = []
-    for u in level1_users:
-        refs = d.query(User).filter(User.referrer_id == u.id).all()
-        level2_activated.extend([r for r in refs if r.activated])
-
-    # переходы по ссылке
+    # 🔹 ВИЗИТЫ (0.05)
     visits = d.query(User).filter(
         User.referrer_id == uid,
         User.visit_reward_given == True
     ).count()
+
+    # 🔹 LEVEL 1 ACTIVATIONS
+    level1 = d.query(User).filter(
+        User.referrer_id == uid,
+        User.activated == True
+    ).count()
+
+    # 🔹 LEVEL 2 ACTIVATIONS
+    level2 = 0
+    level1_users = d.query(User).filter(User.referrer_id == uid).all()
+    for u in level1_users:
+        level2 += d.query(User).filter(
+            User.referrer_id == u.id,
+            User.activated == True
+        ).count()
 
     user = d.query(User).get(uid)
     earned = round(user.balance + user.balance_locked, 4) if user else 0
 
     return {
         "visits": visits,
-        "level1": len(level1_activated),
-        "level2": len(level2_activated),
+        "level1": level1,
+        "level2": level2,
         "earned": earned
     }
 
