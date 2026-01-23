@@ -157,7 +157,7 @@ def ad(data: dict):
 @app.post("/webhook/cryptopay")
 async def webhook(request: Request):
     data = await request.json()
-    payload = data.get("payload", "")
+   payload = data.get("payload", {}).get("payload", "")
 
     print("CRYPTOPAY PAYLOAD:", payload)
 
@@ -187,3 +187,4 @@ async def webhook(request: Request):
         send_admin(f"📣 Ad paid\nUser {uid}\n{amount} TON\n{link}")
 
     return {"ok": True}
+
