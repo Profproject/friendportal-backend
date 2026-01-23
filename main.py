@@ -157,11 +157,11 @@ def ad(data: dict):
 @app.post("/webhook/cryptopay")
 async def webhook(request: Request):
     data = await request.json()
-
     payload = data.get("payload", {}).get("payload", "")
+
     print("CRYPTOPAY PAYLOAD:", payload)
 
-    if isinstance(payload, str) and payload.startswith("activate:"):
+    if payload.startswith("activate:"):
         uid = int(payload.split(":")[1])
         d = db()
         user = d.query(User).get(uid)
@@ -169,18 +169,24 @@ async def webhook(request: Request):
         if user and not user.activated:
             user.activated = True
 
-            # реферальные начисления
             if user.referrer_id:
                 ref1 = d.query(User).get(user.referrer_id)
                 if ref1:
                     ref1.balance += 0.5
 
+                    if ref1.referrer_id:
+                        ref2 = d.query(User).get(ref1.referrer_id)
+                        if ref2:
+                            ref2.balance += 0.25
+
         d.commit()
 
     if payload.startswith("ad:"):
         _, amount, uid, link = payload.split(":", 3)
-        send_admin(f"📣 Ad paid\nUser {uid}\n{amount} TON\n{link}")
+        send_admin(f"💰 Ad paid\nUser {uid}\n{amount} TON\n{link}")
 
     return {"ok": True}
+
+
 
 
