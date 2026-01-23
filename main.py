@@ -157,11 +157,19 @@ def ad(data: dict):
 @app.post("/webhook/cryptopay")
 async def webhook(request: Request):
     data = await request.json()
-    payload = data.get("payload", {}).get("payload", "")
 
-    print("CRYPTOPAY PAYLOAD:", payload)
+raw_payload = data.get("payload", "")
 
-    if payload.startswith("activate:"):
+# payload может быть dict или строкой
+if isinstance(raw_payload, dict):
+    payload = raw_payload.get("payload", "")
+else:
+    payload = raw_payload or ""
+
+print("CRYPTOPAY PAYLOAD:", payload)
+
+if isinstance(payload, str) and payload.startswith("activate:"):
+
         uid = int(payload.split(":")[1])
         d = db()
         user = d.query(User).get(uid)
@@ -186,6 +194,7 @@ async def webhook(request: Request):
         send_admin(f"💰 Ad paid\nUser {uid}\n{amount} TON\n{link}")
 
     return {"ok": True}
+
 
 
 
