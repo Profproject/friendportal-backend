@@ -158,18 +158,17 @@ def ad(data: dict):
 async def webhook(request: Request):
     data = await request.json()
 
-raw_payload = data.get("payload", "")
+    raw_payload = data.get("payload", "")
 
-# payload может быть dict или строкой
-if isinstance(raw_payload, dict):
-    payload = raw_payload.get("payload", "")
-else:
-    payload = raw_payload or ""
+    # payload может быть dict или строкой
+    if isinstance(raw_payload, dict):
+        payload = raw_payload.get("payload", "")
+    else:
+        payload = raw_payload or ""
 
-print("CRYPTOPAY PAYLOAD:", payload)
+    print("CRYPTOPAY PAYLOAD:", payload)
 
-if isinstance(payload, str) and payload.startswith("activate:"):
-
+    if isinstance(payload, str) and payload.startswith("activate:"):
         uid = int(payload.split(":")[1])
         d = db()
         user = d.query(User).get(uid)
@@ -187,15 +186,10 @@ if isinstance(payload, str) and payload.startswith("activate:"):
                         if ref2:
                             ref2.balance += 0.25
 
-        d.commit()
+            d.commit()
 
-    if payload.startswith("ad:"):
+    elif isinstance(payload, str) and payload.startswith("ad:"):
         _, amount, uid, link = payload.split(":", 3)
         send_admin(f"💰 Ad paid\nUser {uid}\n{amount} TON\n{link}")
 
     return {"ok": True}
-
-
-
-
-
