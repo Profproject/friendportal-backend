@@ -44,6 +44,10 @@ def create_invoice(amount: int, payload: str):
 # =========================
 # BALANCE + FIRST VISIT
 # =========================
+@app.get("/balance")
+def balance_get():
+    return {"status": "ok"}
+    
 @app.post("/balance")
 def balance(data: dict):
     d = db()
@@ -193,3 +197,4 @@ async def webhook(request: Request):
         send_admin(f"💰 Ad paid\nUser {uid}\n{amount} TON\n{link}")
 
     return {"ok": True}
+
