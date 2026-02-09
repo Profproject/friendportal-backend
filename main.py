@@ -11,6 +11,22 @@ BOT_TOKEN = "8516580775:AAGal4FIUfn-Y822L0YX_LAi6pyBjUIIDT4"
 ADMIN_TG_ID = 8445167015
 
 app = FastAPI()
+
+from fastapi.responses import HTMLResponse
+
+@app.get("/")
+def root():
+    return HTMLResponse("""
+    <html>
+        <head><title>FriendPortal</title></head>
+        <body style="font-family: Arial; padding: 40px">
+            <h1>FriendPortal</h1>
+            <p>Live Telegram Mini App</p>
+            <p>Backend is running.</p>
+        </body>
+    </html>
+    """)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -197,4 +213,5 @@ async def webhook(request: Request):
         send_admin(f"💰 Ad paid\nUser {uid}\n{amount} TON\n{link}")
 
     return {"ok": True}
+
 
