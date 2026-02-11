@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from database import SessionLocal, engine
 from models import Base, User, WithdrawRequest
 import requests
+from fastapi.responses import HTMLResponse
 
 CRYPTO_PAY_TOKEN = "500297:AAIVkVz3FZ2rD5UfSmiAUk5NClQEEpZPwMw"
 CRYPTO_PAY_API = "https://pay.crypt.bot/api"
@@ -14,18 +15,9 @@ app = FastAPI()
 
 from fastapi.responses import HTMLResponse
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 def root():
-    return HTMLResponse("""
-    <html>
-        <head><title>FriendPortal</title></head>
-        <body style="font-family: Arial; padding: 40px">
-            <h1>FriendPortal</h1>
-            <p>Live Telegram Mini App</p>
-            <p>Backend is running.</p>
-        </body>
-    </html>
-    """)
+    return Path("index.html").read_text(encoding="utf-8")
 
 app.add_middleware(
     CORSMiddleware,
@@ -213,5 +205,6 @@ async def webhook(request: Request):
         send_admin(f"💰 Ad paid\nUser {uid}\n{amount} TON\n{link}")
 
     return {"ok": True}
+
 
 
