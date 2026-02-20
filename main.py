@@ -4,6 +4,7 @@ from database import SessionLocal, engine
 from models import Base, User, WithdrawRequest
 import requests
 from fastapi.responses import HTMLResponse
+from pathlib import Path
 
 CRYPTO_PAY_TOKEN = "500297:AAIVkVz3FZ2rD5UfSmiAUk5NClQEEpZPwMw"
 CRYPTO_PAY_API = "https://pay.crypt.bot/api"
@@ -205,6 +206,7 @@ async def webhook(request: Request):
         send_admin(f"💰 Ad paid\nUser {uid}\n{amount} TON\n{link}")
 
     return {"ok": True}
+
 
 
 
