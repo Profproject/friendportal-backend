@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from database import SessionLocal, engine
+from database import engine, get_db
 from models import Base, User, WithdrawRequest
 import requests
 from fastapi.responses import HTMLResponse
@@ -206,6 +206,7 @@ async def webhook(request: Request):
         send_admin(f"💰 Ad paid\nUser {uid}\n{amount} TON\n{link}")
 
     return {"ok": True}
+
 
 
 
