@@ -30,8 +30,6 @@ app.add_middleware(
 Base.metadata.create_all(bind=engine)
 
 
-def db():
-    return SessionLocal()
 
 
 def send_admin(text: str):
@@ -206,6 +204,7 @@ async def webhook(request: Request):
         send_admin(f"💰 Ad paid\nUser {uid}\n{amount} TON\n{link}")
 
     return {"ok": True}
+
 
 
 
