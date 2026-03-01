@@ -1,3 +1,5 @@
+from fastapi import Depends
+from sqlalchemy.orm import Session
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from database import engine, get_db
@@ -56,12 +58,15 @@ def balance_get():
     return {"status": "ok"}
     
 @app.post("/balance")
-def balance(data: dict):
-    d = db()
-    uid = data["user_id"]
+def balance(data: dict, db: Session = Depends(get_db)):
+    uid = data.get("user_id")
     ref_id = data.get("ref_id")
 
-    user = d.query(User).get(uid)
+    if not uid:
+        return {"balance": 0, "activated": False}
+
+    # было: user = d.query(User).get(uid)
+    user = db.query(User).filter(User.id == uid).first()
 
     if not user:
         user = User(
@@ -70,14 +75,14 @@ def balance(data: dict):
             balance=0,
             activated=False
         )
-        d.add(user)
-        d.commit()
-        d.refresh(user)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
 
-        # 🔹 +0.05 TON за первый переход
+        # +0.05 TON за первый переход
         if ref_id:
             user.balance += 0.05
-            d.commit()
+            db.commit()
 
     return {
         "balance": round(user.balance, 4),
@@ -91,7 +96,7 @@ def balance(data: dict):
 @app.post("/pay")
 def pay(data: dict):
     uid = data["user_id"]
-    d = db()
+   
     user = d.query(User).get(uid)
     if not user:
         user = User(id=uid)
@@ -105,7 +110,7 @@ def pay(data: dict):
 # =========================
 @app.post("/withdraw")
 def withdraw(data: dict):
-    d = db()
+   
     user = d.query(User).get(data["user_id"])
     if not user or not user.activated:
         return {"error": "not_activated"}
@@ -126,23 +131,25 @@ def withdraw(data: dict):
 # STATS
 # =========================
 @app.post("/stats")
-def stats(data: dict):
-    d = db()
-    uid = data["user_id"]
+def stats(data: dict, db: Session = Depends(get_db)):
+    uid = data.get("user_id")
+    if not uid:
+        return {"visits": 0, "level1": 0, "level2": 0, "earned": 0}
 
     # прямые рефералы
-    level1 = d.query(User).filter(User.referrer_id == uid).all()
+    level1 = db.query(User).filter(User.referrer_id == uid).all()
     level1_activated = [u for u in level1 if u.activated]
 
     # второй уровень
     level2_activated = []
     for u in level1:
-        refs = d.query(User).filter(User.referrer_id == u.id).all()
+        refs = db.query(User).filter(User.referrer_id == u.id).all()
         level2_activated.extend([r for r in refs if r.activated])
 
-    visits = d.query(User).filter(User.referrer_id == uid).count()
+    visits = db.query(User).filter(User.referrer_id == uid).count()
 
-    user = d.query(User).get(uid)
+    # было: user = d.query(User).get(uid)
+    user = db.query(User).filter(User.id == uid).first()
     earned = round(user.balance, 4) if user else 0
 
     return {
@@ -151,7 +158,6 @@ def stats(data: dict):
         "level2": len(level2_activated),
         "earned": earned
     }
-
 
 # =========================
 # ADS
@@ -181,7 +187,7 @@ async def webhook(request: Request):
 
     if isinstance(payload, str) and payload.startswith("activate:"):
         uid = int(payload.split(":")[1])
-        d = db()
+       
         user = d.query(User).get(uid)
 
         if user and not user.activated:
@@ -204,6 +210,7 @@ async def webhook(request: Request):
         send_admin(f"💰 Ad paid\nUser {uid}\n{amount} TON\n{link}")
 
     return {"ok": True}
+
 
 
 
