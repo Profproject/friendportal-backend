@@ -18,10 +18,9 @@ app = FastAPI()
 
 from fastapi.responses import HTMLResponse
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/")
 def root():
-    return Path("index.html").read_text(encoding="utf-8")
-
+    return {"status": "ok"}
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -210,6 +209,7 @@ async def webhook(request: Request):
         send_admin(f"💰 Ad paid\nUser {uid}\n{amount} TON\n{link}")
 
     return {"ok": True}
+
 
 
 
