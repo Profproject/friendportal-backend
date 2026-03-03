@@ -1,13 +1,15 @@
-from fastapi import Depends
-from sqlalchemy.orm import Session
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from database import engine, get_db
-from models import Base, User, WithdrawRequest
-import requests
 from fastapi.responses import HTMLResponse
-from pathlib import Path
+from sqlalchemy.orm import Session
+import requests
 
+from database import SessionLocal, engine
+from models import Base, User, WithdrawRequest
+
+# =========================
+# CONFIG (лучше вынести в ENV)
+# =========================
 CRYPTO_PAY_TOKEN = "500297:AAIVkVz3FZ2rD5UfSmiAUk5NClQEEpZPwMw"
 CRYPTO_PAY_API = "https://pay.crypt.bot/api"
 
@@ -16,11 +18,9 @@ ADMIN_TG_ID = 8445167015
 
 app = FastAPI()
 
-from fastapi.responses import HTMLResponse
-
-@app.get("/")
-def root():
-    return {"status": "ok"}
+# =========================
+# CORS
+# =========================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,44 +28,62 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# =========================
+# DB init
+# =========================
 Base.metadata.create_all(bind=engine)
 
 
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 def send_admin(text: str):
     requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        json={"chat_id": ADMIN_TG_ID, "text": text}
+        json={"chat_id": ADMIN_TG_ID, "text": text},
+        timeout=20
     )
 
 
-def create_invoice(amount: int, payload: str):
+def create_invoice(amount: float, payload: str):
     r = requests.post(
         f"{CRYPTO_PAY_API}/createInvoice",
         headers={"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN},
-        json={"asset": "TON", "amount": amount, "payload": payload}
+        json={"asset": "TON", "amount": amount, "payload": payload},
+        timeout=20
     )
-    return r.json()["result"]["pay_url"]
+    data = r.json()
+    # если криптопэй вернул ошибку — покажем её
+    if "result" not in data or not data["result"]:
+        return {"error": data}
+    return data["result"]["pay_url"]
+
+
+# =========================
+# ROOT
+# =========================
+@app.get("/")
+def root():
+    return {"status": "ok"}
 
 
 # =========================
 # BALANCE + FIRST VISIT
 # =========================
-@app.get("/balance")
-def balance_get():
-    return {"status": "ok"}
-    
 @app.post("/balance")
 def balance(data: dict, db: Session = Depends(get_db)):
     uid = data.get("user_id")
+    if not uid:
+        return {"error": "user_id missing"}
+
     ref_id = data.get("ref_id")
 
-    if not uid:
-        return {"balance": 0, "activated": False}
-
-    # было: user = d.query(User).get(uid)
-    user = db.query(User).filter(User.id == uid).first()
+    user = db.query(User).get(uid)
 
     if not user:
         user = User(
@@ -78,14 +96,15 @@ def balance(data: dict, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(user)
 
-        # +0.05 TON за первый переход
+        # бонус за первый переход (если ref_id есть)
         if ref_id:
             user.balance += 0.05
             db.commit()
+            db.refresh(user)
 
     return {
-        "balance": round(user.balance, 4),
-        "activated": user.activated
+        "balance": round(float(user.balance or 0), 4),
+        "activated": bool(user.activated)
     }
 
 
@@ -93,34 +112,48 @@ def balance(data: dict, db: Session = Depends(get_db)):
 # PAY / ACTIVATE
 # =========================
 @app.post("/pay")
-def pay(data: dict):
-    uid = data["user_id"]
-   
-    user = d.query(User).get(uid)
+def pay(data: dict, db: Session = Depends(get_db)):
+    uid = data.get("user_id")
+    if not uid:
+        return {"error": "user_id missing"}
+
+    user = db.query(User).get(uid)
     if not user:
-        user = User(id=uid)
-        d.add(user)
-        d.commit()
-    return {"pay_url": create_invoice(1, f"activate:{uid}")}
+        user = User(id=uid, balance=0, activated=False)
+        db.add(user)
+        db.commit()
+
+    pay_url = create_invoice(1, f"activate:{uid}")
+    if isinstance(pay_url, dict) and pay_url.get("error"):
+        return pay_url
+
+    return {"pay_url": pay_url}
 
 
 # =========================
 # WITHDRAW
 # =========================
 @app.post("/withdraw")
-def withdraw(data: dict):
-   
-    user = d.query(User).get(data["user_id"])
+def withdraw(data: dict, db: Session = Depends(get_db)):
+    uid = data.get("user_id")
+    if not uid:
+        return {"error": "user_id missing"}
+
+    user = db.query(User).get(uid)
     if not user or not user.activated:
         return {"error": "not_activated"}
 
+    address = data.get("address")
+    if not address:
+        return {"error": "address missing"}
+
     w = WithdrawRequest(
         user_id=user.id,
-        address=data["address"],
+        address=address,
         memo=data.get("memo", "")
     )
-    d.add(w)
-    d.commit()
+    db.add(w)
+    db.commit()
 
     send_admin(f"💸 Withdraw\nUser {user.id}\n{w.address}")
     return {"ok": True}
@@ -147,9 +180,8 @@ def stats(data: dict, db: Session = Depends(get_db)):
 
     visits = db.query(User).filter(User.referrer_id == uid).count()
 
-    # было: user = d.query(User).get(uid)
-    user = db.query(User).filter(User.id == uid).first()
-    earned = round(user.balance, 4) if user else 0
+    user = db.query(User).get(uid)
+    earned = round(float(user.balance or 0), 4) if user else 0
 
     return {
         "visits": visits,
@@ -158,13 +190,25 @@ def stats(data: dict, db: Session = Depends(get_db)):
         "earned": earned
     }
 
+
 # =========================
 # ADS
 # =========================
 @app.post("/ad")
 def ad(data: dict):
-    payload = f"ad:{data['amount']}:{data['user_id']}:{data['link']}"
-    return {"pay_url": create_invoice(data["amount"], payload)}
+    amount = data.get("amount")
+    uid = data.get("user_id")
+    link = data.get("link")
+
+    if amount is None or uid is None or not link:
+        return {"error": "amount/user_id/link missing"}
+
+    payload = f"ad:{amount}:{uid}:{link}"
+    pay_url = create_invoice(amount, payload)
+    if isinstance(pay_url, dict) and pay_url.get("error"):
+        return pay_url
+
+    return {"pay_url": pay_url}
 
 
 # =========================
@@ -174,46 +218,46 @@ def ad(data: dict):
 async def webhook(request: Request):
     data = await request.json()
 
-    raw_payload = data.get("payload", "")
+    # В разных событиях payload может лежать по-разному
+    payload = ""
+    if isinstance(data, dict):
+        if isinstance(data.get("payload"), str):
+            payload = data.get("payload") or ""
+        elif isinstance(data.get("payload"), dict):
+            payload = data["payload"].get("payload", "") or ""
+        elif isinstance(data.get("invoice"), dict):
+            payload = data["invoice"].get("payload", "") or ""
 
-    # payload может быть dict или строкой
-    if isinstance(raw_payload, dict):
-        payload = raw_payload.get("payload", "")
-    else:
-        payload = raw_payload or ""
-
+    print("CRYPTOPAY EVENT:", data)
     print("CRYPTOPAY PAYLOAD:", payload)
 
-    if isinstance(payload, str) and payload.startswith("activate:"):
-        uid = int(payload.split(":")[1])
-       
-        user = d.query(User).get(uid)
+    db = SessionLocal()
+    try:
+        if isinstance(payload, str) and payload.startswith("activate:"):
+            uid = int(payload.split(":", 1)[1])
 
-        if user and not user.activated:
-            user.activated = True
+            user = db.query(User).get(uid)
+            if user and not user.activated:
+                user.activated = True
 
-            if user.referrer_id:
-                ref1 = d.query(User).get(user.referrer_id)
-                if ref1:
-                    ref1.balance += 0.5
+                # начисления рефералам
+                if user.referrer_id:
+                    ref1 = db.query(User).get(user.referrer_id)
+                    if ref1:
+                        ref1.balance = float(ref1.balance or 0) + 0.5
 
-                    if ref1.referrer_id:
-                        ref2 = d.query(User).get(ref1.referrer_id)
-                        if ref2:
-                            ref2.balance += 0.25
+                        if ref1.referrer_id:
+                            ref2 = db.query(User).get(ref1.referrer_id)
+                            if ref2:
+                                ref2.balance = float(ref2.balance or 0) + 0.25
 
-            d.commit()
+                db.commit()
 
-    elif isinstance(payload, str) and payload.startswith("ad:"):
-        _, amount, uid, link = payload.split(":", 3)
-        send_admin(f"💰 Ad paid\nUser {uid}\n{amount} TON\n{link}")
+        elif isinstance(payload, str) and payload.startswith("ad:"):
+            # ad:amount:uid:link
+            _, amount, uid, link = payload.split(":", 3)
+            send_admin(f"💰 Ad paid\nUser {uid}\n{amount} TON\n{link}")
 
-    return {"ok": True}
-
-
-
-
-
-
-
-
+        return {"ok": True}
+    finally:
+        db.close()
