@@ -1,6 +1,5 @@
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 import requests
 
@@ -8,13 +7,18 @@ from database import SessionLocal, engine
 from models import Base, User, WithdrawRequest
 
 # =========================
-# CONFIG (лучше вынести в ENV)
+# CONFIG
 # =========================
 CRYPTO_PAY_TOKEN = "500297:AAIVkVz3FZ2rD5UfSmiAUk5NClQEEpZPwMw"
 CRYPTO_PAY_API = "https://pay.crypt.bot/api"
 
 BOT_TOKEN = "8516580775:AAGal4FIUfn-Y822L0YX_LAi6pyBjUIIDT4"
 ADMIN_TG_ID = 8445167015
+
+MIN_WITHDRAW_BALANCE = 10
+ACTIVATION_PRICE = 25
+LEVEL1_REWARD = 0.025
+LEVEL2_REWARD = 0.0125
 
 app = FastAPI()
 
@@ -43,25 +47,32 @@ def get_db():
 
 
 def send_admin(text: str):
-    requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        json={"chat_id": ADMIN_TG_ID, "text": text},
-        timeout=20
-    )
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            json={"chat_id": ADMIN_TG_ID, "text": text},
+            timeout=20
+        )
+    except Exception as e:
+        print("send_admin error:", e)
 
 
 def create_invoice(amount: float, payload: str):
-    r = requests.post(
-        f"{CRYPTO_PAY_API}/createInvoice",
-        headers={"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN},
-        json={"asset": "TON", "amount": amount, "payload": payload},
-        timeout=20
-    )
-    data = r.json()
-    # если криптопэй вернул ошибку — покажем её
-    if "result" not in data or not data["result"]:
-        return {"error": data}
-    return data["result"]["pay_url"]
+    try:
+        r = requests.post(
+            f"{CRYPTO_PAY_API}/createInvoice",
+            headers={"Crypto-Pay-API-Token": CRYPTO_PAY_TOKEN},
+            json={"asset": "TON", "amount": amount, "payload": payload},
+            timeout=20
+        )
+        data = r.json()
+
+        if "result" not in data or not data["result"]:
+            return {"error": data}
+
+        return data["result"]["pay_url"]
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # =========================
@@ -81,26 +92,57 @@ def balance(data: dict, db: Session = Depends(get_db)):
     if not uid:
         return {"error": "user_id missing"}
 
+    try:
+        uid = int(uid)
+    except Exception:
+        return {"error": "invalid user_id"}
+
     ref_id = data.get("ref_id")
+    safe_ref_id = None
+
+    if ref_id is not None:
+        try:
+            ref_id = int(ref_id)
+            if ref_id != uid:
+                safe_ref_id = ref_id
+        except Exception:
+            safe_ref_id = None
 
     user = db.query(User).get(uid)
 
     if not user:
         user = User(
             id=uid,
-            referrer_id=ref_id,
+            referrer_id=safe_ref_id,
             balance=0,
-            activated=False
+            activated=False,
+            ref_rewarded=False
         )
         db.add(user)
         db.commit()
         db.refresh(user)
 
-        # бонус за первый переход (если ref_id есть)
-        if ref_id:
-            user.balance += 0.05
-            db.commit()
-            db.refresh(user)
+    # если юзер уже есть, но referrer_id не был записан, можно записать один раз
+    if user.referrer_id is None and safe_ref_id and safe_ref_id != uid:
+        user.referrer_id = safe_ref_id
+        db.commit()
+        db.refresh(user)
+
+    # начисление только один раз за первого вошедшего юзера
+    if user.referrer_id and not user.ref_rewarded:
+        ref1 = db.query(User).get(user.referrer_id)
+
+        if ref1 and ref1.id != user.id:
+            ref1.balance = float(ref1.balance or 0) + LEVEL1_REWARD
+
+            if ref1.referrer_id and ref1.referrer_id != user.id:
+                ref2 = db.query(User).get(ref1.referrer_id)
+                if ref2 and ref2.id not in [user.id, ref1.id]:
+                    ref2.balance = float(ref2.balance or 0) + LEVEL2_REWARD
+
+        user.ref_rewarded = True
+        db.commit()
+        db.refresh(user)
 
     return {
         "balance": round(float(user.balance or 0), 4),
@@ -117,13 +159,30 @@ def pay(data: dict, db: Session = Depends(get_db)):
     if not uid:
         return {"error": "user_id missing"}
 
+    try:
+        uid = int(uid)
+    except Exception:
+        return {"error": "invalid user_id"}
+
     user = db.query(User).get(uid)
     if not user:
-        user = User(id=uid, balance=0, activated=False)
+        user = User(
+            id=uid,
+            balance=0,
+            activated=False,
+            ref_rewarded=False
+        )
         db.add(user)
         db.commit()
+        db.refresh(user)
 
-    pay_url = create_invoice(1, f"activate:{uid}")
+    if float(user.balance or 0) < MIN_WITHDRAW_BALANCE:
+        return {"error": "min_10_required"}
+
+    if user.activated:
+        return {"error": "already_activated"}
+
+    pay_url = create_invoice(ACTIVATION_PRICE, f"activate:{uid}")
     if isinstance(pay_url, dict) and pay_url.get("error"):
         return pay_url
 
@@ -139,23 +198,47 @@ def withdraw(data: dict, db: Session = Depends(get_db)):
     if not uid:
         return {"error": "user_id missing"}
 
-    user = db.query(User).get(uid)
-    if not user or not user.activated:
-        return {"error": "not_activated"}
+    try:
+        uid = int(uid)
+    except Exception:
+        return {"error": "invalid user_id"}
 
-    address = data.get("address")
+    user = db.query(User).get(uid)
+    if not user:
+        return {"error": "user_not_found"}
+
+    if float(user.balance or 0) < MIN_WITHDRAW_BALANCE:
+        return {"error": "min_withdraw_10"}
+
+    if not user.activated:
+        return {"error": "activation_required"}
+
+    address = (data.get("address") or "").strip()
     if not address:
         return {"error": "address missing"}
+
+    memo = (data.get("memo") or "").strip()
 
     w = WithdrawRequest(
         user_id=user.id,
         address=address,
-        memo=data.get("memo", "")
+        memo=memo,
+        amount=float(user.balance or 0),
+        status="pending"
     )
     db.add(w)
     db.commit()
+    db.refresh(w)
 
-    send_admin(f"💸 Withdraw\nUser {user.id}\n{w.address}")
+    send_admin(
+        f"💸 Withdraw request\n"
+        f"User: {user.id}\n"
+        f"Address: {w.address}\n"
+        f"Memo: {w.memo if w.memo else '-'}\n"
+        f"Amount: {w.amount} TON\n"
+        f"Request ID: {w.id}"
+    )
+
     return {"ok": True}
 
 
@@ -168,25 +251,28 @@ def stats(data: dict, db: Session = Depends(get_db)):
     if not uid:
         return {"visits": 0, "level1": 0, "level2": 0, "earned": 0}
 
-    # прямые рефералы
-    level1 = db.query(User).filter(User.referrer_id == uid).all()
-    level1_activated = [u for u in level1 if u.activated]
+    try:
+        uid = int(uid)
+    except Exception:
+        return {"visits": 0, "level1": 0, "level2": 0, "earned": 0}
 
-    # второй уровень
-    level2_activated = []
+    level1 = db.query(User).filter(User.referrer_id == uid).all()
+    level1_count = len(level1)
+
+    level2_count = 0
     for u in level1:
         refs = db.query(User).filter(User.referrer_id == u.id).all()
-        level2_activated.extend([r for r in refs if r.activated])
+        level2_count += len(refs)
 
-    visits = db.query(User).filter(User.referrer_id == uid).count()
+    visits = level1_count
 
     user = db.query(User).get(uid)
     earned = round(float(user.balance or 0), 4) if user else 0
 
     return {
         "visits": visits,
-        "level1": len(level1_activated),
-        "level2": len(level2_activated),
+        "level1": level1_count,
+        "level2": level2_count,
         "earned": earned
     }
 
@@ -217,19 +303,30 @@ def ad(data: dict):
 @app.post("/webhook/cryptopay")
 async def webhook(request: Request):
     data = await request.json()
-
-    # В разных событиях payload может лежать по-разному
-    payload = ""
-    if isinstance(data, dict):
-        if isinstance(data.get("payload"), str):
-            payload = data.get("payload") or ""
-        elif isinstance(data.get("payload"), dict):
-            payload = data["payload"].get("payload", "") or ""
-        elif isinstance(data.get("invoice"), dict):
-            payload = data["invoice"].get("payload", "") or ""
-
     print("CRYPTOPAY EVENT:", data)
+
+    payload = ""
+    status = ""
+
+    if isinstance(data, dict):
+        invoice = data.get("invoice", {})
+
+        if isinstance(invoice, dict):
+            payload = invoice.get("payload", "") or ""
+            status = invoice.get("status", "") or ""
+
+        if not payload and isinstance(data.get("payload"), str):
+            payload = data.get("payload") or ""
+
+        if not status and isinstance(data.get("status"), str):
+            status = data.get("status") or ""
+
     print("CRYPTOPAY PAYLOAD:", payload)
+    print("CRYPTOPAY STATUS:", status)
+
+    # принимаем только реально оплаченные счета
+    if status not in ["paid", "confirmed", "completed"]:
+        return {"ok": True}
 
     db = SessionLocal()
     try:
@@ -239,22 +336,11 @@ async def webhook(request: Request):
             user = db.query(User).get(uid)
             if user and not user.activated:
                 user.activated = True
-
-                # начисления рефералам
-                if user.referrer_id:
-                    ref1 = db.query(User).get(user.referrer_id)
-                    if ref1:
-                        ref1.balance = float(ref1.balance or 0) + 0.5
-
-                        if ref1.referrer_id:
-                            ref2 = db.query(User).get(ref1.referrer_id)
-                            if ref2:
-                                ref2.balance = float(ref2.balance or 0) + 0.25
-
                 db.commit()
 
+                send_admin(f"✅ Activation paid\nUser: {uid}\nAmount: {ACTIVATION_PRICE} TON")
+
         elif isinstance(payload, str) and payload.startswith("ad:"):
-            # ad:amount:uid:link
             _, amount, uid, link = payload.split(":", 3)
             send_admin(f"💰 Ad paid\nUser {uid}\n{amount} TON\n{link}")
 
