@@ -11,7 +11,7 @@ BOT_TOKEN = "8516580775:AAGal4FIUfn-Y822L0YX_LAi6pyBjUIIDT4"
 BOT_USERNAME = "FriendPortal_bot"
 
 # ссылка на mini app, если нужна обычная fallback-ссылка
-MINI_APP_URL = "https://friendportal-backend-1.onrender.com"
+MINI_APP_URL = "https://friendportal-backend-1.onrender.com/index.html"
 
 dp = Dispatcher()
 
