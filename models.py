@@ -10,14 +10,17 @@ class User(Base):
 
     id = Column(Integer, primary_key=True)
 
-    # рефералка
+    # кто пригласил
     referrer_id = Column(Integer, nullable=True)
 
-    # баланс (ОБЩИЙ)
+    # общий баланс
     balance = Column(Float, default=0)
 
-    # флаг активации
+    # активировал ли платную функцию вывода
     activated = Column(Boolean, default=False)
+
+    # чтобы за одного пользователя не начислило дважды
+    ref_rewarded = Column(Boolean, default=False)
 
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
