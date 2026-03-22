@@ -27,7 +27,7 @@ def build_open_app_keyboard(start_param: str | None = None) -> InlineKeyboardMar
             [
                 InlineKeyboardButton(
                     text="🚀 Open App",
-                    url=webapp_link
+                    web_app={"url": MINI_APP_URL}
                 )
             ]
         ]
